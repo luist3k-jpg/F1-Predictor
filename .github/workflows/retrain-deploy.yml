@@ -1,0 +1,43 @@
+name: Reentrenar y desplegar F1 Predictor
+
+# Corre en días de fin de semana de GP (UTC), cada 2 horas, para recoger los
+# resultados de cada sesión (prácticas, clasificación, sprint y carrera) poco
+# después de que terminan y redesplegar la predicción actualizada.
+# La predicción usa la pace de prácticas (OpenF1) como primer pronóstico y se
+# refina sola con clasificación → sprint → carrera.
+on:
+  schedule:
+    - cron: "0 */2 * * 0,1,4,5,6"   # Jue, Vie, Sáb, Dom, Lun · cada 2 horas
+  workflow_dispatch: {}             # permite ejecutarlo a mano desde la pestaña "Actions"
+
+concurrency:
+  group: retrain-deploy
+  cancel-in-progress: false
+
+jobs:
+  retrain-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar el código
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: pip install --quiet scikit-learn pandas numpy
+
+      - name: Descargar datos, reentrenar y predecir
+        run: python3 train.py --download
+
+      - name: Configurar Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Desplegar a Netlify (producción)
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+        run: npx --yes netlify-cli@latest deploy --prod --dir=public --site c57fc590-43ad-4093-ab92-82b820812fc8

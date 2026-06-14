@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>F1 Predictor · Predicción vs Resultado en vivo</title>
+<meta name="description" content="Modelo de predicción de Fórmula 1: pole, top 10, vuelta rápida y sprint, comparado en vivo con el resultado real." />
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { margin: 0; background: #0A0A0C; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useMemo } = React;
+
+const C = {
+  bg: "#0A0A0C", panel: "#15151B", panelAlt: "#101015", line: "#2A2A33",
+  text: "#F2F2F4", dim: "#9A9AA6", red: "#E10600", redDark: "#8A0400",
+  green: "#33D17A", amber: "#E0B64A", mono: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+};
+const LIVE_URL = "/.netlify/functions/f1live";
+const SYNC_MS = 2 * 60 * 1000;
+
+const pct = (p) => (p == null ? "—" : Math.round(p * 100) + "%");
+
+function App() {
+  const [pred, setPred] = useState(null);
+  const [live, setLive] = useState(null);
+  const [err, setErr] = useState(null);
+  const [lastSync, setLastSync] = useState(null);
+  const [syncing, setSyncing] = useState(false);
+
+  useEffect(() => {
+    fetch("/predictions.json").then((r) => r.json()).then(setPred).catch(() => setErr("No se pudo cargar predictions.json. ¿Corriste train.py?"));
+  }, []);
+
+  const doSync = async (round, season) => {
+    if (round == null) return;
+    setSyncing(true);
+    try {
+      const r = await fetch(`${LIVE_URL}?season=${season}&round=${round}`);
+      const d = await r.json();
+      if (d.error) setErr(d.error);
+      else { setLive(d); setErr(null); setLastSync(new Date()); }
+    } catch (e) { setErr("Sin conexión con la función de resultados."); }
+    setSyncing(false);
+  };
+
+  useEffect(() => {
+    if (!pred) return;
+    doSync(pred.round, pred.season);
+    const t = setInterval(() => doSync(pred.round, pred.season), SYNC_MS);
+    return () => clearInterval(t);
+  }, [pred]);
+
+  if (!pred) return (
+    <div style={{ color: C.dim, fontFamily: "system-ui", padding: 40, textAlign: "center" }}>
+      {err || "Cargando predicciones…"}
+    </div>
+  );
+
+  const m = pred.model_metrics || {};
+  const actualPole = live?.pole?.code || null;
+  const actualFL = live?.fastlap?.code || null;
+  const actualRaceTop10 = (live?.race || []).filter((r) => r.pos != null).sort((a, b) => a.pos - b.pos).slice(0, 10);
+  const actualTop10Codes = new Set(actualRaceTop10.map((r) => r.code));
+  const actualByCode = Object.fromEntries((live?.race || []).map((r) => [r.code, r]));
+  const top10Hits = pred.top10.filter((d) => actualTop10Codes.has(d.code)).length;
+
+  const Badge = ({ ok, children }) => (
+    <span style={{ fontFamily: C.mono, fontSize: 11, fontWeight: 700, padding: "2px 7px", borderRadius: 5,
+      color: ok ? "#06210F" : C.text, background: ok ? C.green : "transparent",
+      border: `1px solid ${ok ? C.green : C.line}` }}>{children}</span>
+  );
+
+  return (
+    <div style={{ minHeight: "100vh", background: C.bg, color: C.text, fontFamily: "system-ui, -apple-system, sans-serif" }}>
+      <div style={{ height: 4, background: `linear-gradient(90deg, ${C.red}, ${C.amber}, ${C.red})` }} />
+
+      <header className="px-4 pt-6 pb-3 max-w-5xl mx-auto">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <div style={{ color: C.red, fontFamily: C.mono, fontSize: 11, letterSpacing: "0.25em", fontWeight: 700 }}>
+              FÓRMULA 1 · PREDICCIÓN {pred.season} {pred.is_sprint ? "· FIN DE SEMANA SPRINT" : ""}
+            </div>
+            <h1 style={{ fontWeight: 900, fontSize: "clamp(26px,5vw,42px)", letterSpacing: "-0.02em", lineHeight: 1.05, margin: "4px 0 0" }}>
+              RONDA {pred.round} · {pred.raceName}
+            </h1>
+            <div style={{ color: C.dim, fontSize: 13, marginTop: 4 }}>
+              {pred.circuit} · {pred.locality} · {new Date(pred.date).toLocaleDateString("es-MX", { weekday: "long", day: "numeric", month: "long" })}
+            </div>
+            <div style={{ marginTop: 8 }}><BasisBadge basis={pred.basis} practice={pred.practice} /></div>
+          </div>
+          <div className="flex items-center gap-2">
+            {lastSync && <span style={{ color: C.dim, fontFamily: C.mono, fontSize: 11 }}>sync {lastSync.toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}</span>}
+            <button onClick={() => doSync(pred.round, pred.season)} disabled={syncing}
+              style={{ border: `1px solid ${C.redDark}`, color: C.red, background: "transparent", borderRadius: 6, padding: "6px 12px", fontSize: 12, cursor: "pointer", opacity: syncing ? 0.5 : 1, fontWeight: 700 }}>
+              {syncing ? "Sincronizando…" : "↻ Sincronizar"}
+            </button>
+          </div>
+        </div>
+        {err && <div style={{ color: C.amber, fontFamily: C.mono, fontSize: 11, marginTop: 6 }}>⚠ {err}</div>}
+
+        {/* precisión del modelo */}
+        <div className="flex flex-wrap gap-2 mt-4">
+          <Metric label="Acierto de Pole" val={pct(m.pole_top1_acc)} sub={`${m.pole_races_tested || 0} carreras test`} />
+          <Metric label="Top-10 aciertos" val={m.top10_avg_correct != null ? m.top10_avg_correct + "/10" : "—"} sub="promedio" />
+          <Metric label="Vuelta rápida" val={pct(m.fastlap_top1_acc)} sub={`${m.fastlap_races_tested || 0} carreras test`} />
+          <Metric label="Datos" val={(m.train_rows || 0) + (m.test_rows || 0)} sub="filas piloto-GP" />
+        </div>
+        {pred.practice && <PracticeStrip practice={pred.practice} />}
+      </header>
+
+      <main className="px-4 pb-16 max-w-5xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
+
+        {/* POLE */}
+        <Card title="POLE POSITION" tag={pred.quali_known ? (actualPole ? null : "quali disputada") : "antes de quali"}
+          right={actualPole ? <Badge ok={actualPole === pred.pole.predicted.code}>{actualPole === pred.pole.predicted.code ? "ACIERTO" : "FALLO"}</Badge> : null}>
+          <BigPick code={pred.pole.predicted.code} name={pred.pole.predicted.name} team={pred.pole.predicted.team} p={pred.pole.predicted.p} />
+          {actualPole && <Actual label="Pole real" code={actualPole} name={live.pole.name} />}
+          <ProbList items={pred.pole.top5} highlight={actualPole} />
+        </Card>
+
+        {/* VUELTA RÁPIDA */}
+        <Card title="VUELTA RÁPIDA" right={actualFL ? <Badge ok={actualFL === pred.fastest_lap.predicted.code}>{actualFL === pred.fastest_lap.predicted.code ? "ACIERTO" : "FALLO"}</Badge> : null}>
+          <BigPick code={pred.fastest_lap.predicted.code} name={pred.fastest_lap.predicted.name} team={pred.fastest_lap.predicted.team} p={pred.fastest_lap.predicted.p} />
+          {actualFL && <Actual label="Vuelta rápida real" code={actualFL} name={live.fastlap.name} />}
+          <ProbList items={pred.fastest_lap.top5} highlight={actualFL} />
+        </Card>
+
+        {/* TOP 10 CARRERA */}
+        <Card title="TOP 10 DE CARRERA" full
+          right={actualRaceTop10.length ? <Badge ok={top10Hits >= 7}>{top10Hits}/10 EN TOP 10</Badge> : null}>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6">
+            {pred.top10.map((d) => {
+              const a = actualByCode[d.code];
+              const inTop10 = actualTop10Codes.has(d.code);
+              const shownActual = live?.hasRace;
+              return (
+                <div key={d.code} className="flex items-center gap-2 py-1.5" style={{ borderBottom: `1px solid ${C.line}` }}>
+                  <span style={{ fontFamily: C.mono, fontSize: 13, fontWeight: 700, color: C.red, width: 22 }}>P{d.pos}</span>
+                  <span style={{ fontWeight: 700, fontSize: 14, width: 44 }}>{d.code}</span>
+                  <span className="flex-1 truncate" style={{ fontSize: 12, color: C.dim }}>{d.team}</span>
+                  {shownActual ? (
+                    <span style={{ fontFamily: C.mono, fontSize: 12, fontWeight: 700, color: inTop10 ? C.green : C.dim }}>
+                      {a && a.pos != null ? `→ P${a.pos}` : a ? "DNF" : "—"}
+                    </span>
+                  ) : (
+                    <span style={{ fontFamily: C.mono, fontSize: 11, color: C.dim }}>{pct(d.p)}</span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+
+        {/* SPRINT */}
+        {pred.is_sprint && pred.sprint_team && (
+          <Card title="EQUIPO GANADOR DE SPRINT" full
+            right={live?.sprintWinnerTeam ? <Badge ok={live.sprintWinnerTeam === pred.sprint_team.predicted}>{live.sprintWinnerTeam === pred.sprint_team.predicted ? "ACIERTO" : "FALLO"}</Badge> : null}>
+            <div style={{ fontWeight: 900, fontSize: 24, color: C.red }}>{pred.sprint_team.predicted}</div>
+            {live?.sprintWinnerTeam && <Actual label="Sprint real" code="" name={live.sprintWinnerTeam} />}
+            <div className="flex gap-2 mt-2 flex-wrap">
+              {pred.sprint_team.top3.map((t) => (
+                <span key={t.team} style={{ fontFamily: C.mono, fontSize: 12, color: C.dim, border: `1px solid ${C.line}`, borderRadius: 999, padding: "3px 10px" }}>{t.team} · {pct(t.p)}</span>
+              ))}
+            </div>
+          </Card>
+        )}
+      </main>
+
+      <footer className="px-4 pb-10 max-w-5xl mx-auto" style={{ color: C.dim, fontSize: 11, fontFamily: C.mono }}>
+        Modelo gradient boosting entrenado con históricos {(m.seasons || []).join(", ")} (Jolpica/Ergast). Features pre-sesión sin fuga de datos:
+        forma reciente de piloto y equipo, historial en el circuito y posición de campeonato. Generado: {pred.generated_at ? new Date(pred.generated_at).toLocaleString("es-MX") : "—"}.
+        Las predicciones son probabilísticas; el automovilismo tiene alta varianza.
+      </footer>
+    </div>
+  );
+}
+
+function BasisBadge({ basis, practice }) {
+  const map = {
+    practice: { t: "BASADO EN PRÁCTICAS", c: C.amber },
+    quali: { t: "BASADO EN CLASIFICACIÓN", c: C.green },
+    form: { t: "PRELIMINAR · FORMA", c: C.dim },
+  };
+  const b = map[basis] || map.form;
+  const extra = basis === "practice" && practice && practice.session ? " · " + practice.session : "";
+  return (
+    <span style={{ fontFamily: C.mono, fontSize: 11, fontWeight: 700, color: b.c,
+      border: `1px solid ${b.c}`, borderRadius: 999, padding: "3px 11px", display: "inline-block" }}>
+      ● {b.t}{extra}
+    </span>
+  );
+}
+
+function PracticeStrip({ practice }) {
+  return (
+    <div className="mt-3 flex items-center gap-2 flex-wrap" style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 8, padding: "8px 12px" }}>
+      <span style={{ fontFamily: C.mono, fontSize: 10, color: C.amber, letterSpacing: "0.1em", fontWeight: 700 }}>
+        PACE PRÁCTICAS{practice.session ? " · " + practice.session.toUpperCase() : ""}
+      </span>
+      {(practice.top5 || []).map((d) => (
+        <span key={d.code} style={{ fontFamily: C.mono, fontSize: 12, color: C.text, border: `1px solid ${C.line}`, borderRadius: 6, padding: "2px 8px" }}>
+          <b style={{ color: C.red }}>{d.pos}.</b> {d.code}{d.gap != null && d.gap > 0 ? ` +${Number(d.gap).toFixed(3)}` : ""}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function Metric({ label, val, sub }) {
+  return (
+    <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 8, padding: "8px 14px", minWidth: 120 }}>
+      <div style={{ fontFamily: C.mono, fontSize: 10, color: C.dim, letterSpacing: "0.1em" }}>{label.toUpperCase()}</div>
+      <div style={{ fontWeight: 900, fontSize: 22, color: C.text }}>{val}</div>
+      <div style={{ fontFamily: C.mono, fontSize: 10, color: C.dim }}>{sub}</div>
+    </div>
+  );
+}
+
+function Card({ title, tag, right, children, full }) {
+  return (
+    <section className={full ? "md:col-span-2" : ""} style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 10, overflow: "hidden" }}>
+      <div className="flex items-center justify-between px-4 py-2" style={{ background: C.panelAlt, borderBottom: `1px solid ${C.line}` }}>
+        <span style={{ fontWeight: 900, fontSize: 14, letterSpacing: "0.06em" }}>{title}
+          {tag && <span style={{ fontFamily: C.mono, fontSize: 10, color: C.dim, marginLeft: 8, fontWeight: 400 }}>· {tag}</span>}
+        </span>
+        {right}
+      </div>
+      <div className="px-4 py-3">{children}</div>
+    </section>
+  );
+}
+
+function BigPick({ code, name, team, p }) {
+  return (
+    <div className="flex items-baseline gap-3">
+      <span style={{ fontWeight: 900, fontSize: 34, letterSpacing: "-0.02em", color: C.red }}>{code}</span>
+      <div>
+        <div style={{ fontWeight: 700, fontSize: 16 }}>{name}</div>
+        <div style={{ fontSize: 12, color: C.dim }}>{team} · prob. {pct(p)}</div>
+      </div>
+    </div>
+  );
+}
+
+function Actual({ label, code, name }) {
+  return (
+    <div className="mt-2 flex items-center gap-2" style={{ borderTop: `1px dashed ${C.line}`, paddingTop: 8 }}>
+      <span style={{ fontFamily: C.mono, fontSize: 10, color: C.green, letterSpacing: "0.1em" }}>{label.toUpperCase()}</span>
+      <span style={{ fontWeight: 700, fontSize: 14, color: C.green }}>{code} {name}</span>
+    </div>
+  );
+}
+
+function ProbList({ items, highlight }) {
+  return (
+    <div className="mt-3 flex flex-col gap-1">
+      {items.map((d) => {
+        const hit = highlight && d.code === highlight;
+        return (
+          <div key={d.code} className="flex items-center gap-2">
+            <span style={{ fontWeight: 700, fontSize: 12, width: 40, color: hit ? C.green : C.text }}>{d.code}</span>
+            <div style={{ flex: 1, height: 7, background: C.panelAlt, borderRadius: 4, overflow: "hidden" }}>
+              <div style={{ width: Math.max(3, d.p * 100) + "%", height: "100%", background: hit ? C.green : C.red }} />
+            </div>
+            <span style={{ fontFamily: C.mono, fontSize: 11, color: C.dim, width: 36, textAlign: "right" }}>{pct(d.p)}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>

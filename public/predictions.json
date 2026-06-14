@@ -1,0 +1,180 @@
+{
+  "generated_at": "2026-06-13T20:28:14.882177+00:00",
+  "season": 2026,
+  "round": 7,
+  "raceName": "Barcelona Grand Prix",
+  "circuit": "Circuit de Barcelona-Catalunya",
+  "locality": "Barcelona",
+  "date": "2026-06-14",
+  "is_sprint": false,
+  "quali_known": true,
+  "pole": {
+    "predicted": {
+      "code": "RUS",
+      "name": "George Russell",
+      "team": "Mercedes",
+      "p": 0.563
+    },
+    "top5": [
+      {
+        "code": "RUS",
+        "name": "George Russell",
+        "team": "Mercedes",
+        "p": 0.563
+      },
+      {
+        "code": "HAM",
+        "name": "Lewis Hamilton",
+        "team": "Ferrari",
+        "p": 0.143
+      },
+      {
+        "code": "NOR",
+        "name": "Lando Norris",
+        "team": "McLaren",
+        "p": 0.135
+      },
+      {
+        "code": "LEC",
+        "name": "Charles Leclerc",
+        "team": "Ferrari",
+        "p": 0.099
+      },
+      {
+        "code": "VER",
+        "name": "Max Verstappen",
+        "team": "Red Bull",
+        "p": 0.029
+      }
+    ]
+  },
+  "top10": [
+    {
+      "pos": 1,
+      "code": "ANT",
+      "name": "Andrea Kimi Antonelli",
+      "team": "Mercedes",
+      "p": 0.292
+    },
+    {
+      "pos": 2,
+      "code": "RUS",
+      "name": "George Russell",
+      "team": "Mercedes",
+      "p": 0.187
+    },
+    {
+      "pos": 3,
+      "code": "HAM",
+      "name": "Lewis Hamilton",
+      "team": "Ferrari",
+      "p": 0.174
+    },
+    {
+      "pos": 4,
+      "code": "NOR",
+      "name": "Lando Norris",
+      "team": "McLaren",
+      "p": 0.114
+    },
+    {
+      "pos": 5,
+      "code": "LEC",
+      "name": "Charles Leclerc",
+      "team": "Ferrari",
+      "p": 0.063
+    },
+    {
+      "pos": 6,
+      "code": "HAD",
+      "name": "Isack Hadjar",
+      "team": "Red Bull",
+      "p": 0.041
+    },
+    {
+      "pos": 7,
+      "code": "VER",
+      "name": "Max Verstappen",
+      "team": "Red Bull",
+      "p": 0.039
+    },
+    {
+      "pos": 8,
+      "code": "PIA",
+      "name": "Oscar Piastri",
+      "team": "McLaren",
+      "p": 0.027
+    },
+    {
+      "pos": 9,
+      "code": "HUL",
+      "name": "Nico Hülkenberg",
+      "team": "Audi",
+      "p": 0.018
+    },
+    {
+      "pos": 10,
+      "code": "LAW",
+      "name": "Liam Lawson",
+      "team": "RB F1 Team",
+      "p": 0.011
+    }
+  ],
+  "fastest_lap": {
+    "predicted": {
+      "code": "RUS",
+      "name": "George Russell",
+      "team": "Mercedes",
+      "p": 0.444
+    },
+    "top5": [
+      {
+        "code": "RUS",
+        "name": "George Russell",
+        "team": "Mercedes",
+        "p": 0.444
+      },
+      {
+        "code": "ANT",
+        "name": "Andrea Kimi Antonelli",
+        "team": "Mercedes",
+        "p": 0.097
+      },
+      {
+        "code": "PIA",
+        "name": "Oscar Piastri",
+        "team": "McLaren",
+        "p": 0.089
+      },
+      {
+        "code": "SAI",
+        "name": "Carlos Sainz",
+        "team": "Williams",
+        "p": 0.059
+      },
+      {
+        "code": "HAM",
+        "name": "Lewis Hamilton",
+        "team": "Ferrari",
+        "p": 0.047
+      }
+    ]
+  },
+  "sprint_team": null,
+  "model_metrics": {
+    "pole_top1_acc": 0.25,
+    "pole_races_tested": 16,
+    "top10_avg_correct": 7.88,
+    "top10_races_tested": 16,
+    "fastlap_top1_acc": 0.312,
+    "fastlap_races_tested": 16,
+    "train_rows": 1198,
+    "test_rows": 332,
+    "seasons": [
+      2023,
+      2024,
+      2025,
+      2026
+    ]
+  }
+}

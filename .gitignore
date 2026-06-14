@@ -1,0 +1,9 @@
+# Local Netlify folder
+.netlify
+
+# Python
+__pycache__/
+*.pyc
+
+# Caché de pace de prácticas (se regenera en cada predicción)
+data/2026_practice.json

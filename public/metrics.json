@@ -1,0 +1,16 @@
+{
+  "pole_top1_acc": 0.25,
+  "pole_races_tested": 16,
+  "top10_avg_correct": 7.88,
+  "top10_races_tested": 16,
+  "fastlap_top1_acc": 0.312,
+  "fastlap_races_tested": 16,
+  "train_rows": 1198,
+  "test_rows": 332,
+  "seasons": [
+    2023,
+    2024,
+    2025,
+    2026
+  ]
+}
