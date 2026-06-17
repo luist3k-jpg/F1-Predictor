@@ -5,9 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>F1 Predictor · Predicción vs Resultado en vivo</title>
 <meta name="description" content="Modelo de predicción de Fórmula 1: pole, top 10, vuelta rápida y sprint, comparado en vivo con el resultado real." />
-<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<!-- Versiones FIJADAS a propósito. NO usar "latest": @babel/standalone 8.x
+     compila el JSX con el runtime "automatic" (import react/jsx-runtime), lo que
+     rompe la página (pantalla en negro: "Cannot use import statement outside a module").
+     7.27.x usa React.createElement, compatible con el React global del CDN. -->
+<script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.27.2/babel.min.js"></script>
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
   body { margin: 0; background: #0A0A0C; }
