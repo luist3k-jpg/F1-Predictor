@@ -1,0 +1,294 @@
+{
+  "generated_at": "2026-06-17T03:50:00.611647+00:00",
+  "season": 2026,
+  "summary": {
+    "races": 6,
+    "pole_hits": 3,
+    "pole_acc": 0.5,
+    "fastlap_hits": 3,
+    "fastlap_acc": 0.5,
+    "top10_total_correct": 46,
+    "top10_avg": 7.67,
+    "sprint_races": 3,
+    "sprint_hits": 1,
+    "sprint_acc": 0.333
+  },
+  "races": [
+    {
+      "round": 1,
+      "raceName": "Australian Grand Prix",
+      "date": "2026-03-08",
+      "is_sprint": false,
+      "pole": {
+        "pred": "VER",
+        "actual": "RUS",
+        "hit": false
+      },
+      "top10": {
+        "correct": 8,
+        "pred": [
+          "RUS",
+          "NOR",
+          "LEC",
+          "ANT",
+          "LIN",
+          "HAM",
+          "LAW",
+          "BEA",
+          "BOR",
+          "PER"
+        ],
+        "actual": [
+          "RUS",
+          "ANT",
+          "LEC",
+          "HAM",
+          "NOR",
+          "VER",
+          "BEA",
+          "LIN",
+          "BOR",
+          "GAS"
+        ]
+      },
+      "fastlap": {
+        "pred": "RUS",
+        "actual": "VER",
+        "hit": false
+      },
+      "sprint": null
+    },
+    {
+      "round": 2,
+      "raceName": "Chinese Grand Prix",
+      "date": "2026-03-15",
+      "is_sprint": true,
+      "pole": {
+        "pred": "NOR",
+        "actual": "ANT",
+        "hit": false
+      },
+      "top10": {
+        "correct": 8,
+        "pred": [
+          "RUS",
+          "ANT",
+          "LEC",
+          "HAM",
+          "HAD",
+          "HUL",
+          "GAS",
+          "BEA",
+          "SAI",
+          "LIN"
+        ],
+        "actual": [
+          "ANT",
+          "RUS",
+          "HAM",
+          "LEC",
+          "BEA",
+          "GAS",
+          "LAW",
+          "HAD",
+          "SAI",
+          "COL"
+        ]
+      },
+      "fastlap": {
+        "pred": "ANT",
+        "actual": "ANT",
+        "hit": true
+      },
+      "sprint": {
+        "pred": "Mercedes",
+        "actual": "Mercedes",
+        "hit": true
+      }
+    },
+    {
+      "round": 3,
+      "raceName": "Japanese Grand Prix",
+      "date": "2026-03-29",
+      "is_sprint": false,
+      "pole": {
+        "pred": "ANT",
+        "actual": "ANT",
+        "hit": true
+      },
+      "top10": {
+        "correct": 7,
+        "pred": [
+          "ANT",
+          "PIA",
+          "LEC",
+          "NOR",
+          "HAM",
+          "GAS",
+          "HAD",
+          "RUS",
+          "BOR",
+          "LIN"
+        ],
+        "actual": [
+          "ANT",
+          "PIA",
+          "LEC",
+          "RUS",
+          "NOR",
+          "HAM",
+          "GAS",
+          "VER",
+          "LAW",
+          "OCO"
+        ]
+      },
+      "fastlap": {
+        "pred": "ANT",
+        "actual": "ANT",
+        "hit": true
+      },
+      "sprint": null
+    },
+    {
+      "round": 4,
+      "raceName": "Miami Grand Prix",
+      "date": "2026-05-03",
+      "is_sprint": true,
+      "pole": {
+        "pred": "ANT",
+        "actual": "ANT",
+        "hit": true
+      },
+      "top10": {
+        "correct": 9,
+        "pred": [
+          "ANT",
+          "NOR",
+          "LEC",
+          "RUS",
+          "VER",
+          "HAM",
+          "PIA",
+          "COL",
+          "BEA",
+          "SAI"
+        ],
+        "actual": [
+          "ANT",
+          "NOR",
+          "PIA",
+          "RUS",
+          "VER",
+          "HAM",
+          "COL",
+          "LEC",
+          "SAI",
+          "ALB"
+        ]
+      },
+      "fastlap": {
+        "pred": "ANT",
+        "actual": "NOR",
+        "hit": false
+      },
+      "sprint": {
+        "pred": "Mercedes",
+        "actual": "McLaren",
+        "hit": false
+      }
+    },
+    {
+      "round": 5,
+      "raceName": "Canadian Grand Prix",
+      "date": "2026-05-24",
+      "is_sprint": true,
+      "pole": {
+        "pred": "RUS",
+        "actual": "RUS",
+        "hit": true
+      },
+      "top10": {
+        "correct": 7,
+        "pred": [
+          "PIA",
+          "ANT",
+          "HAM",
+          "LEC",
+          "VER",
+          "HAD",
+          "COL",
+          "HUL",
+          "BOR",
+          "GAS"
+        ],
+        "actual": [
+          "ANT",
+          "HAM",
+          "VER",
+          "LEC",
+          "HAD",
+          "COL",
+          "LAW",
+          "GAS",
+          "SAI",
+          "BEA"
+        ]
+      },
+      "fastlap": {
+        "pred": "HAM",
+        "actual": "ANT",
+        "hit": false
+      },
+      "sprint": {
+        "pred": "McLaren",
+        "actual": "Mercedes",
+        "hit": false
+      }
+    },
+    {
+      "round": 6,
+      "raceName": "Monaco Grand Prix",
+      "date": "2026-06-07",
+      "is_sprint": false,
+      "pole": {
+        "pred": "LEC",
+        "actual": "ANT",
+        "hit": false
+      },
+      "top10": {
+        "correct": 7,
+        "pred": [
+          "ANT",
+          "HAM",
+          "RUS",
+          "HAD",
+          "PIA",
+          "GAS",
+          "LAW",
+          "LIN",
+          "SAI",
+          "COL"
+        ],
+        "actual": [
+          "ANT",
+          "HAM",
+          "GAS",
+          "HAD",
+          "PIA",
+          "LAW",
+          "LIN",
+          "ALB",
+          "OCO",
+          "ALO"
+        ]
+      },
+      "fastlap": {
+        "pred": "ANT",
+        "actual": "ANT",
+        "hit": true
+      },
+      "sprint": null
+    }
+  ]
+}

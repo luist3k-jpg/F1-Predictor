@@ -159,15 +159,24 @@ def time_split(res, frac=0.8):
     cut = races.iloc[int(len(races) * frac)]["date"]
     return res[res["date"] < cut].copy(), res[res["date"] >= cut].copy()
 
+def fit_core(tr):
+    """Entrena los 3 modelos base (pole / carrera / vuelta rápida) con el frame dado.
+    Misma configuración en la evaluación temporal y en el backtest histórico, para que
+    el historial refleje exactamente el modelo que produce las predicciones."""
+    trf = tr.dropna(subset=["finish"])
+    mq = GradientBoostingRegressor(n_estimators=300, max_depth=3, learning_rate=0.05, subsample=0.9, random_state=1).fit(tr[FEATS_QUALI], tr["quali_eff"])
+    mr = GradientBoostingRegressor(n_estimators=400, max_depth=3, learning_rate=0.05, subsample=0.9, random_state=1).fit(trf[FEATS_RACE], trf["finish"])
+    mfl = GradientBoostingClassifier(n_estimators=300, max_depth=3, learning_rate=0.05, subsample=0.9, random_state=1).fit(trf[FEATS_FL], trf["got_fl"])
+    return {"quali": mq, "race": mr, "fl": mfl}
+
+
 def train_models(res):
     tr, te = time_split(res)
-    models, metrics = {}, {}
+    metrics = {}
+    models = fit_core(tr)
+    m_quali, m_race, m_fl = models["quali"], models["race"], models["fl"]
 
-    # POLE — regresión de posición de clasificación (sin grid)
-    m_quali = GradientBoostingRegressor(n_estimators=300, max_depth=3, learning_rate=0.05, subsample=0.9, random_state=1)
-    m_quali.fit(tr[FEATS_QUALI], tr["quali_eff"])
-    models["quali"] = m_quali
-    # acierto de pole en test: ¿el de menor predicción fue el pole real?
+    # POLE — acierto de pole en test: ¿el de menor predicción fue el pole real?
     hit = tot = 0
     for (s, r), g in te.groupby(["season", "round"]):
         if g["quali"].notna().sum() == 0:
@@ -178,11 +187,7 @@ def train_models(res):
     metrics["pole_top1_acc"] = round(hit / tot, 3) if tot else None
     metrics["pole_races_tested"] = tot
 
-    # TOP-10 / orden de carrera — regresión de posición final
-    trf = tr.dropna(subset=["finish"])
-    m_race = GradientBoostingRegressor(n_estimators=400, max_depth=3, learning_rate=0.05, subsample=0.9, random_state=1)
-    m_race.fit(trf[FEATS_RACE], trf["finish"])
-    models["race"] = m_race
+    # TOP-10 / orden de carrera — solapamiento del top-10 predicho vs. real
     overlaps = []
     for (s, r), g in te.groupby(["season", "round"]):
         g2 = g.dropna(subset=["finish"])
@@ -194,10 +199,7 @@ def train_models(res):
     metrics["top10_avg_correct"] = round(float(np.mean(overlaps)), 2) if overlaps else None
     metrics["top10_races_tested"] = len(overlaps)
 
-    # VUELTA RÁPIDA — clasificación binaria
-    m_fl = GradientBoostingClassifier(n_estimators=300, max_depth=3, learning_rate=0.05, subsample=0.9, random_state=1)
-    m_fl.fit(trf[FEATS_FL], trf["got_fl"])
-    models["fl"] = m_fl
+    # VUELTA RÁPIDA — ¿el de mayor probabilidad logró la vuelta rápida?
     hit = tot = 0
     for (s, r), g in te.groupby(["season", "round"]):
         g2 = g.dropna(subset=["finish"])
@@ -405,6 +407,93 @@ def predict_next(res, spr, models):
                                    top3=[dict(team=t, p=round(float(p), 3)) for t, p in teamp.head(3).items()])
     return pred
 
+# ───────────────────── Historial (backtest walk-forward) ─────────────────────
+def backtest_history(res, spr, season=2026):
+    """Reconstruye, sin fuga de datos, lo que el modelo habría predicho ANTES de cada
+    GP ya disputado de la temporada: para cada ronda R se entrena solo con datos
+    anteriores a la fecha de R y se predice R. Compara contra el resultado real y
+    devuelve el resumen + el detalle por carrera para public/history.json.
+
+    Las features ya son 'pre-carrera' (medias móviles/expanding con shift), así que la
+    única precaución de fuga es el entrenamiento: se acota a date < fecha(R)."""
+    season_res = res[res["season"] == season]
+    spr_season = spr[spr["season"] == season]
+    races_out = []
+    agg = dict(races=0, pole_hits=0, fl_hits=0, top10_correct=0,
+               sprint_races=0, sprint_hits=0)
+
+    for rnd in sorted(int(x) for x in season_res["round"].unique()):
+        g = season_res[season_res["round"] == rnd].copy()
+        if g["finish"].notna().sum() < 10:          # carrera no disputada/incompleta
+            continue
+        dR = g["date"].iloc[0]
+        tr = res[res["date"] < dR]
+        if tr.dropna(subset=["finish"]).shape[0] < 100:   # historial insuficiente
+            continue
+        models = fit_core(tr)
+
+        # POLE (modelo de clasificación por forma) vs. pole real (mejor posición de quali)
+        g["pred_quali"] = models["quali"].predict(g[FEATS_QUALI])
+        pred_pole = g.sort_values("pred_quali").iloc[0]["code"]
+        qrows = g.dropna(subset=["quali"])
+        actual_pole = qrows.sort_values("quali").iloc[0]["code"] if len(qrows) else None
+        pole_hit = actual_pole is not None and pred_pole == actual_pole
+
+        # TOP-10 de carrera (usa la parrilla real, conocida antes de la carrera)
+        gr = g.dropna(subset=["finish"]).copy()
+        gr["pred_race"] = models["race"].predict(gr[FEATS_RACE])
+        pred_top10 = list(gr.sort_values("pred_race").head(10)["code"])
+        actual_top10 = list(gr.sort_values("finish").head(10)["code"])
+        top10_correct = len(set(pred_top10) & set(actual_top10))
+
+        # VUELTA RÁPIDA
+        gr["p_fl"] = models["fl"].predict_proba(gr[FEATS_FL])[:, 1]
+        pred_fl = gr.sort_values("p_fl", ascending=False).iloc[0]["code"]
+        flrows = gr[gr["got_fl"] == 1]
+        actual_fl = flrows.iloc[0]["code"] if len(flrows) else None
+        fl_hit = actual_fl is not None and pred_fl == actual_fl
+
+        # SPRINT (solo si esa ronda tuvo sprint): equipo con mayor prob. agregada
+        sprint_block = None
+        sround = spr_season[spr_season["round"] == rnd]
+        if len(sround):
+            gr["p_top10_score"] = softmax_neg(gr["pred_race"].values, temp=2.5)
+            teamp = gr.groupby("team")["p_top10_score"].sum().sort_values(ascending=False)
+            pred_team = teamp.index[0] if len(teamp) else None
+            sr = sround.dropna(subset=["sprint"]).sort_values("sprint")
+            actual_team = sr.iloc[0]["team"] if len(sr) else None
+            if actual_team is not None:
+                sprint_hit = pred_team == actual_team
+                sprint_block = dict(pred=pred_team, actual=actual_team, hit=bool(sprint_hit))
+                agg["sprint_races"] += 1
+                agg["sprint_hits"] += int(sprint_hit)
+
+        races_out.append(dict(
+            round=int(rnd), raceName=g["raceName"].iloc[0], date=str(pd.Timestamp(dR).date()),
+            is_sprint=bool(len(sround)),
+            pole=dict(pred=pred_pole, actual=actual_pole, hit=bool(pole_hit)),
+            top10=dict(correct=int(top10_correct), pred=pred_top10, actual=actual_top10),
+            fastlap=dict(pred=pred_fl, actual=actual_fl, hit=bool(fl_hit)),
+            sprint=sprint_block,
+        ))
+        agg["races"] += 1
+        agg["pole_hits"] += int(pole_hit)
+        agg["fl_hits"] += int(fl_hit)
+        agg["top10_correct"] += top10_correct
+
+    n = agg["races"] or 1
+    summary = dict(
+        races=agg["races"],
+        pole_hits=agg["pole_hits"], pole_acc=round(agg["pole_hits"] / n, 3),
+        fastlap_hits=agg["fl_hits"], fastlap_acc=round(agg["fl_hits"] / n, 3),
+        top10_total_correct=agg["top10_correct"], top10_avg=round(agg["top10_correct"] / n, 2),
+        sprint_races=agg["sprint_races"], sprint_hits=agg["sprint_hits"],
+        sprint_acc=round(agg["sprint_hits"] / agg["sprint_races"], 3) if agg["sprint_races"] else None,
+    )
+    return dict(generated_at=datetime.now(timezone.utc).isoformat(),
+                season=season, summary=summary, races=races_out)
+
+
 # ───────────────────────── Main ─────────────────────────
 def main():
     ap = argparse.ArgumentParser()
@@ -429,6 +518,14 @@ def main():
         print(f"  base: {pred.get('basis')} | POLE pred: {pred['pole']['predicted']['code']} | Vuelta rápida: {pred['fastest_lap']['predicted']['code']}")
     else:
         print("  no hay próximo GP para predecir.")
+
+    # Historial de la temporada: backtest walk-forward (sin fuga) de los GP ya disputados.
+    print("Reconstruyendo historial de la temporada…")
+    hist = backtest_history(res, spr)
+    json.dump(hist, open(os.path.join(OUT, "history.json"), "w"), ensure_ascii=False, indent=2)
+    s = hist["summary"]
+    print(f"  historial: {s['races']} GP · pole {s['pole_hits']}/{s['races']} · "
+          f"top10 {s['top10_avg']}/10 · VR {s['fastlap_hits']}/{s['races']} -> public/history.json")
 
 if __name__ == "__main__":
     main()

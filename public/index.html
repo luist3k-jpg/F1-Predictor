@@ -38,9 +38,15 @@ function App() {
   const [err, setErr] = useState(null);
   const [lastSync, setLastSync] = useState(null);
   const [syncing, setSyncing] = useState(false);
+  const [hist, setHist] = useState(null);
 
   useEffect(() => {
     fetch("/predictions.json").then((r) => r.json()).then(setPred).catch(() => setErr("No se pudo cargar predictions.json. ¿Corriste train.py?"));
+  }, []);
+
+  // Historial de la temporada (opcional: si no existe history.json, la sección no se muestra)
+  useEffect(() => {
+    fetch("/history.json").then((r) => (r.ok ? r.json() : null)).then(setHist).catch(() => {});
   }, []);
 
   const doSync = async (round, season) => {
@@ -178,6 +184,8 @@ function App() {
         )}
       </main>
 
+      <SeasonHistory history={hist} />
+
       <footer className="px-4 pb-10 max-w-5xl mx-auto" style={{ color: C.dim, fontSize: 11, fontFamily: C.mono }}>
         Modelo gradient boosting entrenado con históricos {(m.seasons || []).join(", ")} (Jolpica/Ergast). Features pre-sesión sin fuga de datos:
         forma reciente de piloto y equipo, historial en el circuito y posición de campeonato. Generado: {pred.generated_at ? new Date(pred.generated_at).toLocaleString("es-MX") : "—"}.
@@ -279,6 +287,79 @@ function ProbList({ items, highlight }) {
         );
       })}
     </div>
+  );
+}
+
+function SeasonHistory({ history }) {
+  if (!history || !history.races || !history.races.length) return null;
+  const s = history.summary;
+  const pctn = (n, d) => (d ? Math.round((100 * n) / d) + "%" : "—");
+  const t10color = (c) => (c >= 8 ? C.green : c >= 6 ? C.amber : C.dim);
+  const th = (align = "center") => ({ textAlign: align, padding: "4px 8px", fontWeight: 700, whiteSpace: "nowrap" });
+  const td = (align = "center") => ({ textAlign: align, padding: "7px 8px", verticalAlign: "middle", whiteSpace: "nowrap" });
+
+  const Hit = ({ ok }) => (
+    <span style={{ fontFamily: C.mono, fontWeight: 800, fontSize: 12, color: ok ? C.green : C.red }}>{ok ? "✓" : "✗"}</span>
+  );
+  // celda "predicción · real": muestra el pick del modelo y, si falló, el resultado real
+  const PA = ({ pred, actual, hit }) => (
+    <span style={{ fontFamily: C.mono, fontSize: 12 }}>
+      <Hit ok={hit} /> <b style={{ color: hit ? C.green : C.text }}>{pred || "—"}</b>
+      {!hit && actual ? <span style={{ color: C.dim }}> · {actual}</span> : null}
+    </span>
+  );
+
+  return (
+    <section className="px-4 pb-16 max-w-5xl mx-auto mt-4">
+      <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 10, overflow: "hidden" }}>
+        <div className="flex items-center justify-between px-4 py-2" style={{ background: C.panelAlt, borderBottom: `1px solid ${C.line}` }}>
+          <span style={{ fontWeight: 900, fontSize: 14, letterSpacing: "0.06em" }}>HISTORIAL DE LA TEMPORADA {history.season}</span>
+          <span style={{ fontFamily: C.mono, fontSize: 10, color: C.dim }}>{s.races} GP · backtest sin fuga</span>
+        </div>
+
+        {/* resumen de la temporada */}
+        <div className="flex flex-wrap gap-2 px-4 pt-3">
+          <Metric label="Aciertos de Pole" val={`${s.pole_hits}/${s.races}`} sub={pctn(s.pole_hits, s.races)} />
+          <Metric label="Top-10 promedio" val={`${s.top10_avg}/10`} sub={`${s.top10_total_correct}/${s.races * 10} aciertos`} />
+          <Metric label="Vuelta rápida" val={`${s.fastlap_hits}/${s.races}`} sub={pctn(s.fastlap_hits, s.races)} />
+          {s.sprint_races > 0 && <Metric label="Sprint · equipo" val={`${s.sprint_hits}/${s.sprint_races}`} sub={pctn(s.sprint_hits, s.sprint_races)} />}
+        </div>
+
+        {/* tabla compacta por carrera */}
+        <div className="px-2 py-3" style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 540 }}>
+            <thead>
+              <tr style={{ color: C.dim, fontFamily: C.mono, fontSize: 10, letterSpacing: "0.08em" }}>
+                <th style={th("left")}>GRAN PREMIO</th>
+                <th style={th()}>POLE</th>
+                <th style={th()}>TOP 10</th>
+                <th style={th()}>V. RÁPIDA</th>
+                <th style={th()}>SPRINT</th>
+              </tr>
+            </thead>
+            <tbody>
+              {history.races.map((r) => (
+                <tr key={r.round} style={{ borderTop: `1px solid ${C.line}` }}>
+                  <td style={td("left")}>
+                    <span style={{ color: C.red, fontFamily: C.mono, fontWeight: 700, fontSize: 12 }}>R{r.round}</span>{" "}
+                    <span style={{ fontSize: 13 }}>{r.raceName.replace(" Grand Prix", "")}</span>
+                    {r.is_sprint && <span style={{ fontFamily: C.mono, fontSize: 9, color: C.amber, marginLeft: 6, border: `1px solid ${C.line}`, borderRadius: 4, padding: "1px 4px" }}>SPR</span>}
+                  </td>
+                  <td style={td()}><PA pred={r.pole.pred} actual={r.pole.actual} hit={r.pole.hit} /></td>
+                  <td style={td()}><span style={{ fontFamily: C.mono, fontWeight: 800, fontSize: 13, color: t10color(r.top10.correct) }}>{r.top10.correct}/10</span></td>
+                  <td style={td()}><PA pred={r.fastlap.pred} actual={r.fastlap.actual} hit={r.fastlap.hit} /></td>
+                  <td style={td()}>{r.sprint ? <PA pred={r.sprint.pred} actual={r.sprint.actual} hit={r.sprint.hit} /> : <span style={{ color: C.dim }}>—</span>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="px-4 pb-3" style={{ color: C.dim, fontFamily: C.mono, fontSize: 10, lineHeight: 1.5 }}>
+          Cada GP se reconstruye entrenando el modelo solo con carreras anteriores a esa fecha (walk-forward, sin fuga de datos).
+          ✓ acierto · ✗ fallo (· muestra el resultado real). El equipo de Sprint es el de mayor probabilidad agregada de podio.
+        </div>
+      </div>
+    </section>
   );
 }
 
