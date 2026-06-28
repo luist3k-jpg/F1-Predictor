@@ -112,7 +112,10 @@ function App() {
               style={{ border: `1px solid ${C.redDark}`, color: C.red, background: "transparent", borderRadius: 6, padding: "6px 12px", fontSize: 12, cursor: "pointer", opacity: syncing ? 0.5 : 1, fontWeight: 700 }}>
               {syncing ? "Sincronizando…" : "↻ Sincronizar"}
             </button>
-            <ForceRefresh />
+            <ForceRefresh baseline={pred.generated_at} onFresh={(d) => {
+              setPred(d);
+              fetch("/history.json?t=" + Date.now(), { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).then(setHist).catch(() => {});
+            }} />
           </div>
         </div>
         {err && <div style={{ color: C.amber, fontFamily: C.mono, fontSize: 11, marginTop: 6 }}>⚠ {err}</div>}
@@ -199,14 +202,43 @@ function App() {
 // Botón "Reentrenar ahora": fuerza el run antes del cron de 2 h.
 // Pide un PIN y llama a la función Netlify /.netlify/functions/refresh (que dispara
 // GitHub Actions). El token de GitHub vive en Netlify, nunca en el navegador.
-function ForceRefresh() {
+// Tras lanzarlo, sondea predictions.json y, cuando se publica la nueva versión,
+// actualiza la web sola (sin recargar a mano).
+function ForceRefresh({ baseline, onFresh }) {
   const [open, setOpen] = useState(false);
   const [pin, setPin] = useState("");
-  const [st, setSt] = useState("idle"); // idle | sending | ok | err
+  const [st, setSt] = useState("idle"); // idle | sending | waiting | done | err
   const [msg, setMsg] = useState("");
 
+  // Mientras "waiting": comprueba predictions.json hasta que su generated_at sea
+  // más nuevo que el actual -> el nuevo despliegue ya está vivo -> refresca la UI.
+  useEffect(() => {
+    if (st !== "waiting") return;
+    let alive = true, timer;
+    const started = Date.now();
+    const MAX = 8 * 60 * 1000; // deja de esperar tras 8 min
+    const tick = async () => {
+      try {
+        const r = await fetch(`/predictions.json?t=${Date.now()}`, { cache: "no-store" });
+        const d = await r.json();
+        if (alive && baseline && d.generated_at && new Date(d.generated_at) > new Date(baseline)) {
+          setSt("done"); setMsg("✓ Predicciones actualizadas.");
+          if (onFresh) onFresh(d);
+          setTimeout(() => { if (alive) { setOpen(false); setSt("idle"); setMsg(""); } }, 4000);
+          return;
+        }
+      } catch (e) { /* reintenta en el próximo tick */ }
+      if (alive) {
+        if (Date.now() - started < MAX) timer = setTimeout(tick, 12000);
+        else { setSt("err"); setMsg("Tardó más de lo normal. Recarga la página en un momento."); }
+      }
+    };
+    timer = setTimeout(tick, 12000); // primera comprobación a los 12 s
+    return () => { alive = false; clearTimeout(timer); };
+  }, [st, baseline]);
+
   const launch = async () => {
-    if (!pin || st === "sending") return;
+    if (!pin || st === "sending" || st === "waiting") return;
     setSt("sending"); setMsg("");
     try {
       const r = await fetch("/.netlify/functions/refresh", {
@@ -216,8 +248,9 @@ function ForceRefresh() {
       });
       const d = await r.json().catch(() => ({}));
       if (r.ok && d.ok) {
-        setSt("ok"); setMsg(d.message || "Reentrenamiento lanzado. Recarga en ~2 min."); setPin("");
-        setTimeout(() => { setOpen(false); setSt("idle"); setMsg(""); }, 7000);
+        setPin("");
+        setSt("waiting");
+        setMsg("Reentrenando… la web se actualizará sola al terminar (~2 min).");
       } else {
         setSt("err"); setMsg(d.error || `Error ${r.status}.`);
       }
@@ -226,33 +259,37 @@ function ForceRefresh() {
     }
   };
 
+  const busy = st === "sending" || st === "waiting";
+  const msgColor = st === "err" ? C.amber : C.green;
+  const msgIcon = st === "err" ? "⚠ " : st === "waiting" ? "● " : "";
+
   return (
     <div style={{ position: "relative" }}>
       <button onClick={() => setOpen((o) => !o)} title="Forzar reentrenamiento ahora"
         style={{ border: `1px solid ${C.line}`, color: C.text, background: "transparent", borderRadius: 6, padding: "6px 12px", fontSize: 12, cursor: "pointer", fontWeight: 700 }}>
-        ⟳ Reentrenar ahora
+        {st === "waiting" ? "⟳ Reentrenando…" : "⟳ Reentrenar ahora"}
       </button>
       {open && (
         <div style={{ position: "absolute", right: 0, top: "calc(100% + 6px)", zIndex: 20, background: C.panel, border: `1px solid ${C.line}`, borderRadius: 8, padding: 12, width: 248, boxShadow: "0 10px 30px rgba(0,0,0,0.55)" }}>
           <div style={{ fontFamily: C.mono, fontSize: 10, color: C.dim, letterSpacing: "0.1em", marginBottom: 6 }}>PIN PARA FORZAR EL RUN</div>
           <div className="flex gap-2">
-            <input type="password" value={pin} autoFocus
+            <input type="password" value={pin} autoFocus disabled={busy}
               onChange={(e) => setPin(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") launch(); }}
               placeholder="••••••"
-              style={{ flex: 1, minWidth: 0, background: C.panelAlt, border: `1px solid ${C.line}`, color: C.text, borderRadius: 6, padding: "6px 8px", fontSize: 13, fontFamily: C.mono, outline: "none" }} />
-            <button onClick={launch} disabled={st === "sending" || !pin}
-              style={{ border: `1px solid ${C.redDark}`, color: "#fff", background: C.red, borderRadius: 6, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", opacity: st === "sending" || !pin ? 0.5 : 1 }}>
-              {st === "sending" ? "…" : "Lanzar"}
+              style={{ flex: 1, minWidth: 0, background: C.panelAlt, border: `1px solid ${C.line}`, color: C.text, borderRadius: 6, padding: "6px 8px", fontSize: 13, fontFamily: C.mono, outline: "none", opacity: busy ? 0.6 : 1 }} />
+            <button onClick={launch} disabled={busy || !pin}
+              style={{ border: `1px solid ${C.redDark}`, color: "#fff", background: C.red, borderRadius: 6, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", opacity: busy || !pin ? 0.5 : 1 }}>
+              {st === "sending" ? "…" : st === "waiting" ? "⟳" : "Lanzar"}
             </button>
           </div>
           {msg && (
-            <div style={{ marginTop: 8, fontFamily: C.mono, fontSize: 11, color: st === "ok" ? C.green : C.amber, lineHeight: 1.4 }}>
-              {st === "ok" ? "✓ " : "⚠ "}{msg}
+            <div style={{ marginTop: 8, fontFamily: C.mono, fontSize: 11, color: msgColor, lineHeight: 1.4 }}>
+              {msgIcon}{msg}
             </div>
           )}
           <div style={{ marginTop: 8, fontFamily: C.mono, fontSize: 9, color: C.dim, lineHeight: 1.4 }}>
-            Lanza GitHub Actions (descarga datos, reentrena y redespliega). La web se actualiza sola ~2 min después.
+            Lanza GitHub Actions (descarga datos, reentrena y redespliega). Las predicciones se actualizan solas ~2 min después.
           </div>
         </div>
       )}
