@@ -41,6 +41,10 @@ jobs:
           node-version: "20"
 
       - name: Desplegar a Netlify (producción)
+        timeout-minutes: 10                       # red de seguridad: nunca vuelve a colgarse 40+ min
         env:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
-        run: npx --yes netlify-cli@latest deploy --prod --dir=public --site c57fc590-43ad-4093-ab92-82b820812fc8
+          NETLIFY_SITE_ID: c57fc590-43ad-4093-ab92-82b820812fc8   # resuelve el sitio en modo headless (sin "netlify link")
+          CI: "true"                              # fuerza modo no interactivo (sin prompts que cuelguen el job)
+        # versión FIJA del CLI (no @latest): evita roturas por cambios de versión como la del 28-jun
+        run: npx --yes netlify-cli@17 deploy --prod --dir=public --site c57fc590-43ad-4093-ab92-82b820812fc8
