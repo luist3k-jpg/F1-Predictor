@@ -29,8 +29,13 @@ jobs:
         with:
           python-version: "3.12"
 
+      # Versiones PINEADAS: un breaking change silencioso de sklearn/pandas/numpy
+      # rompería el entrenamiento del siguiente domingo sin aviso. Estos rangos
+      # son los compatibles verificados con train.py (usa APIs estables:
+      # GradientBoosting{Regressor,Classifier}, groupby().apply(), rolling(),
+      # merge()). Si en el futuro necesitas subir mayor, corre localmente antes.
       - name: Instalar dependencias
-        run: pip install --quiet scikit-learn pandas numpy
+        run: pip install --quiet "scikit-learn==1.5.*" "pandas==2.2.*" "numpy<2.1"
 
       - name: Descargar datos, reentrenar y predecir
         run: python3 train.py --download

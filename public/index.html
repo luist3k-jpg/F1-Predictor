@@ -41,12 +41,16 @@ function App() {
   const [hist, setHist] = useState(null);
 
   useEffect(() => {
-    fetch("/predictions.json").then((r) => r.json()).then(setPred).catch(() => setErr("No se pudo cargar predictions.json. ¿Corriste train.py?"));
+    // cache-buster + no-store: el CDN/navegador servía predictions.json cacheado
+    // aunque GitHub Actions redespliega cada 2 h. Ahora siempre trae la versión fresca.
+    fetch(`/predictions.json?t=${Date.now()}`, { cache: "no-store" }).then((r) => r.json()).then(setPred).catch(() => setErr("No se pudo cargar predictions.json. ¿Corriste train.py?"));
   }, []);
 
   // Historial de la temporada (opcional: si no existe history.json, la sección no se muestra)
   useEffect(() => {
-    fetch("/history.json").then((r) => (r.ok ? r.json() : null)).then(setHist).catch(() => {});
+    // cache-buster + no-store: history.json se estaba quedando "congelado" en Monaco (R6, 17-jun)
+    // aunque el workflow lo redepliega tras cada GP porque la CDN/navegador servía copia cacheada.
+    fetch(`/history.json?t=${Date.now()}`, { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).then(setHist).catch(() => {});
   }, []);
 
   const doSync = async (round, season) => {

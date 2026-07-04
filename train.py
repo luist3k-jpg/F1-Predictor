@@ -494,11 +494,51 @@ def backtest_history(res, spr, season=2026):
                 season=season, summary=summary, races=races_out)
 
 
+# ───────────────────────── Guard de regresión (bad deploy) ─────────────────────────
+REGRESSION_TOL = 0.95   # tolera hasta -5% respecto a la corrida anterior (data cleaning legítima)
+
+def _load_previous_metrics():
+    """Lee el metrics.json de la corrida anterior si existe. None si no hay o está mal formado.
+    Ausencia = primera corrida o archivo purgado; NUNCA aborta por ausencia."""
+    p = os.path.join(OUT, "metrics.json")
+    if not os.path.exists(p):
+        return None
+    try:
+        with open(p) as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"  (aviso) no pude leer metrics.json previo: {e}", file=sys.stderr)
+        return None
+
+def _abort_if_regressed(name, current, previous, tol=REGRESSION_TOL):
+    """Aborta con exit 1 si current < previous * tol. Silencia si previous es None/0."""
+    if not previous or current is None:
+        return
+    threshold = previous * tol
+    if current < threshold:
+        pct = (current - previous) / previous * 100.0
+        print(
+            f"\nERROR: {name} regressed from {previous} to {current} ({pct:+.1f}%). "
+            f"Aborting to prevent bad deploy.\n"
+            f"Check Jolpica API health at https://api.jolpi.ca/ergast/f1/current.json "
+            f"and OpenF1 at https://api.openf1.org/v1/sessions?session_type=Practice",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
 # ───────────────────────── Main ─────────────────────────
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--download", action="store_true", help="descargar/actualizar datos antes de entrenar")
     args = ap.parse_args()
+
+    # Baseline: métricas de la corrida anterior (si existen). Usado por los guards
+    # más abajo para abortar si train_rows o races_in_history regresionan >5%.
+    prev_metrics = _load_previous_metrics()
+    prev_shape = (prev_metrics or {}).get("shape") or {}
+    prev_train_rows = prev_shape.get("train_rows") or (prev_metrics or {}).get("train_rows")
+    prev_races_history = prev_shape.get("races_in_history")
+
     if args.download:
         print("Descargando datos de Jolpica/Ergast…")
         download()
@@ -509,7 +549,38 @@ def main():
     print("Entrenando modelos…")
     models, metrics = train_models(res)
     print("  métricas:", json.dumps(metrics, ensure_ascii=False))
+
+    # Guard #1: train_rows monotónico (con 5% de tolerancia por data cleaning legítimo).
+    # Si Jolpica devuelve un feed vacío / malformado, el training regresa mucho y
+    # no queremos publicar predicciones sobre un modelo peor. Abortamos ANTES de
+    # escribir cualquier archivo o desplegar.
+    _abort_if_regressed("train_rows", metrics.get("train_rows"), prev_train_rows)
+
     pred = predict_next(res, spr, models)
+
+    # Historial de la temporada: backtest walk-forward (sin fuga) de los GP ya disputados.
+    # Lo calculamos ANTES de escribir predictions.json para poder aplicar el segundo
+    # guard (races_in_history) y abortar todo el deploy si el backtest colapsa.
+    print("Reconstruyendo historial de la temporada…")
+    hist = backtest_history(res, spr)
+    races_in_history = int(hist.get("summary", {}).get("races", 0))
+
+    # Guard #2: races_in_history monotónico (mismo criterio 5%). Además, si el schedule
+    # tiene N GP disputados y el history dice <N y era N-1 antes, avisa.
+    _abort_if_regressed("races_in_history", races_in_history, prev_races_history)
+
+    # Enriquece metrics con el bloque `shape` para que futuras corridas puedan compararse.
+    metrics["shape"] = {
+        "train_rows": int(metrics.get("train_rows", 0)),
+        "test_rows": int(metrics.get("test_rows", 0)),
+        "features_quali": len(FEATS_QUALI),
+        "features_race": len(FEATS_RACE),
+        "features_fl": len(FEATS_FL),
+        "races_in_history": races_in_history,
+        "generated_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+
+    # Escritura de artefactos (ya pasados los dos guards -> deploy es seguro)
     if pred:
         pred["model_metrics"] = metrics
         json.dump(pred, open(os.path.join(OUT, "predictions.json"), "w"), ensure_ascii=False, indent=2)
@@ -517,15 +588,27 @@ def main():
         print(f"  predicción generada para R{pred['round']} {pred['raceName']} -> public/predictions.json")
         print(f"  base: {pred.get('basis')} | POLE pred: {pred['pole']['predicted']['code']} | Vuelta rápida: {pred['fastest_lap']['predicted']['code']}")
     else:
+        # Sin próximo GP (fin de temporada), aun así actualizamos metrics.json para
+        # mantener el shape baseline vivo para la siguiente corrida.
+        json.dump(metrics, open(os.path.join(OUT, "metrics.json"), "w"), ensure_ascii=False, indent=2)
         print("  no hay próximo GP para predecir.")
 
-    # Historial de la temporada: backtest walk-forward (sin fuga) de los GP ya disputados.
-    print("Reconstruyendo historial de la temporada…")
-    hist = backtest_history(res, spr)
     json.dump(hist, open(os.path.join(OUT, "history.json"), "w"), ensure_ascii=False, indent=2)
     s = hist["summary"]
     print(f"  historial: {s['races']} GP · pole {s['pole_hits']}/{s['races']} · "
           f"top10 {s['top10_avg']}/10 · VR {s['fastlap_hits']}/{s['races']} -> public/history.json")
+
+    # Sanity check: el historial debe cubrir todos los GP ya disputados de 2026.
+    # Si esto se dispara, es que el backtest se saltó una ronda (p. ej. resultados
+    # parciales < 10 pilotos, historial insuficiente, o cambio en el schema de la API).
+    raced_rounds = {int(rc["round"]) for rc in _load(2026, "results")
+                    if len(rc.get("Results", [])) >= 10}
+    hist_rounds = {r["round"] for r in hist.get("races", [])}
+    missing = sorted(raced_rounds - hist_rounds)
+    if missing:
+        print(f"  ⚠️  aviso: el historial NO incluye las rondas {missing} "
+              f"(disputadas en resultados pero ausentes del backtest). "
+              f"Revisa backtest_history() y el schema de Jolpica.", file=sys.stderr)
 
 if __name__ == "__main__":
     main()

@@ -3,3 +3,12 @@
 
 [functions]
   directory = "netlify/functions"
+
+# Nunca cachear los JSON de la app: se regeneran en cada workflow (cada 2 h Jue–Lun).
+# Antes: la CDN de Netlify servía history.json/predictions.json cacheados y la web
+# mostraba datos viejos (p. ej. historial congelado en Monaco tras Barcelona/Austria).
+[[headers]]
+  for = "/*.json"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+    Netlify-CDN-Cache-Control = "public, max-age=0, must-revalidate"
