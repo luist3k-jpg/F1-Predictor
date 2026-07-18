@@ -105,11 +105,12 @@ const FreshnessBadge = ({ iso, prefix = "actualizado", compact = false }) => {
 // `?t=Date.now()` = URL única cada llamada, `cache: "no-store"` = no guardar la
 // respuesta, `pragma: no-cache` = extra hint para proxies antiguos. Nadie debería
 // devolvernos JSON viejo con estos tres combinados y los headers de netlify.toml.
-const fetchFresh = (url) => {
+const fetchFresh = (url, options = {}) => {
   const sep = url.includes("?") ? "&" : "?";
   return fetch(`${url}${sep}t=${Date.now()}`, {
+    ...options,
     cache: "no-store",
-    headers: { "cache-control": "no-cache", "pragma": "no-cache" },
+    headers: { "cache-control": "no-cache", "pragma": "no-cache", ...(options.headers || {}) },
   });
 };
 
@@ -144,13 +145,19 @@ function App() {
     // Predicción + historial en paralelo con el fetch de live: no bloquean si fallan.
     fetchFresh(`/predictions.json`).then((r) => r.ok ? r.json() : null).then((d) => { if (d) setPred(d); }).catch(() => {});
     fetchFresh(`/history.json`).then((r) => r.ok ? r.json() : null).then((d) => { if (d) setHist(d); }).catch(() => {});
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 12000);
     try {
-      const r = await fetchFresh(`${LIVE_URL}?season=${season}&round=${round}`);
+      const r = await fetchFresh(`${LIVE_URL}?season=${season}&round=${round}`, { signal: controller.signal });
       const d = await r.json();
       if (d.error) setErr(d.error);
       else { setLive(d); setErr(null); setLastSync(new Date()); }
-    } catch (e) { setErr("Sin conexión con la función de resultados."); }
-    setSyncing(false);
+    } catch (e) {
+      setErr(e.name === "AbortError" ? "La sincronización tardó demasiado. Intenta de nuevo." : "Sin conexión con la función de resultados.");
+    } finally {
+      clearTimeout(timeout);
+      setSyncing(false);
+    }
   };
 
   useEffect(() => {
@@ -158,7 +165,9 @@ function App() {
     doSync(pred.round, pred.season);
     const t = setInterval(() => doSync(pred.round, pred.season), SYNC_MS);
     return () => clearInterval(t);
-  }, [pred]);
+  // Depender del objeto `pred` completo creaba un loop: doSync -> setPred ->
+  // nuevo objeto -> doSync otra vez. Solo temporada/ronda deben reiniciar el timer.
+  }, [pred?.round, pred?.season]);
 
   if (!pred) return (
     <div style={{ color: C.dim, fontFamily: "system-ui", padding: 40, textAlign: "center" }}>

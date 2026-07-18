@@ -37,6 +37,16 @@ jobs:
       - name: Instalar dependencias
         run: pip install --quiet "scikit-learn==1.5.*" "pandas==2.2.*" "numpy<2.1"
 
+      # Los artefactos generados no se commitean. Descargarlos del deploy vigente
+      # permite que los guards comparen contra la corrida REAL anterior.
+      - name: Descargar baseline del último deploy
+        run: |
+          for file in predictions.json metrics.json history.json; do
+            curl --fail --silent --show-error --retry 3 \
+              "https://calm-malasada-0d2d78.netlify.app/$file?t=$(date +%s%N)" \
+              --output "public/$file" || echo "Aviso: no se pudo descargar $file; continúa sin ese baseline"
+          done
+
       - name: Descargar datos, reentrenar y predecir
         run: python3 train.py --download
 

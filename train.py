@@ -35,10 +35,19 @@ os.makedirs(DATA, exist_ok=True)
 os.makedirs(OUT, exist_ok=True)
 
 # ───────────────────────── Descarga (opcional) ─────────────────────────
-def _fetch(url):
-    req = urllib.request.Request(url, headers={"User-Agent": "f1-predictor/1.0"})
-    with urllib.request.urlopen(req, timeout=30) as r:
-        return json.loads(r.read().decode())
+def _fetch(url, attempts=1):
+    """Descarga JSON con reintentos opcionales para APIs públicas inestables."""
+    last_error = None
+    for attempt in range(attempts):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "f1-predictor/1.0"})
+            with urllib.request.urlopen(req, timeout=30) as r:
+                return json.loads(r.read().decode())
+        except Exception as e:
+            last_error = e
+            if attempt + 1 < attempts:
+                time.sleep(1.5 * (attempt + 1))
+    raise last_error
 
 def _inner_key(t):
     return {"results": "Results", "qualifying": "QualifyingResults", "sprint": "SprintResults"}[t]
@@ -226,14 +235,15 @@ def softmax_neg(x, temp=1.0):
 def fetch_practice_pace(race_date, now=None, cache_path=None):
     """Trae la última práctica YA TERMINADA del GP cuyo domingo es race_date (YYYY-MM-DD).
     Devuelve {'session_name','session_key','pace':{code:{'practice_pos','practice_gap'}}} o None.
-    Usa OpenF1 (gratis, sin clave). Cualquier fallo -> None (el pipeline cae a 'forma')."""
+    Usa OpenF1 (gratis, sin clave), reintenta fallos transitorios y cae a la práctica
+    anterior si la última todavía no tiene clasificación completa."""
     try:
         rd = datetime.fromisoformat(str(race_date)[:10]).replace(tzinfo=timezone.utc)
     except Exception:
         return None
     now = now or datetime.now(timezone.utc)
     try:
-        sess = _fetch(f"{OPENF1}/sessions?year={rd.year}&session_type=Practice")
+        sess = _fetch(f"{OPENF1}/sessions?year={rd.year}&session_type=Practice", attempts=3)
     except Exception as e:
         print("  (aviso) OpenF1 sessions falló:", e); return None
     cand = []
@@ -254,26 +264,34 @@ def fetch_practice_pace(race_date, now=None, cache_path=None):
             cand.append((d1, s.get("session_key"), s.get("session_name", "")))
     if not cand:
         return None
-    cand.sort()
-    _, skey, sname = cand[-1]            # la práctica más reciente ya terminada (normalmente FP3/FP2)
-    try:
-        result = _fetch(f"{OPENF1}/session_result?session_key={skey}")
-        drivers = _fetch(f"{OPENF1}/drivers?session_key={skey}")
-    except Exception as e:
-        print("  (aviso) OpenF1 resultado/drivers falló:", e); return None
-    code_by_num = {d.get("driver_number"): d.get("name_acronym", "") for d in drivers}
-    pace = {}
-    for r in result:
-        code = code_by_num.get(r.get("driver_number"))
-        pos = r.get("position")
-        if not code or pos is None:
+    # Probar de la más reciente a la anterior. OpenF1 puede publicar la sesión antes
+    # que session_result/drivers; eso no debe borrar una FP2 válida y volver a FORMA.
+    out = None
+    for _, skey, sname in sorted(cand, reverse=True):
+        try:
+            result = _fetch(f"{OPENF1}/session_result?session_key={skey}", attempts=3)
+            drivers = _fetch(f"{OPENF1}/drivers?session_key={skey}", attempts=3)
+        except Exception as e:
+            print(f"  (aviso) OpenF1 {sname or skey} falló; probando práctica anterior:", e)
             continue
-        gap = r.get("gap_to_leader")
-        pace[code] = {"practice_pos": int(pos),
-                      "practice_gap": float(gap) if isinstance(gap, (int, float)) else None}
-    if not pace:
+        code_by_num = {d.get("driver_number"): d.get("name_acronym", "") for d in drivers}
+        pace = {}
+        for r in result:
+            code = code_by_num.get(r.get("driver_number"))
+            pos = r.get("position")
+            if not code or pos is None:
+                continue
+            gap = r.get("gap_to_leader")
+            pace[code] = {"practice_pos": int(pos),
+                          "practice_gap": float(gap) if isinstance(gap, (int, float)) else None}
+        # Una clasificación parcial no debe dominar el modelo. Una parrilla moderna
+        # tiene 20-22 coches; 10 es un mínimo conservador para aceptar la sesión.
+        if len(pace) >= 10:
+            out = {"session_name": sname, "session_key": skey, "pace": pace}
+            break
+        print(f"  (aviso) OpenF1 {sname or skey} incompleta ({len(pace)} pilotos); probando práctica anterior")
+    if out is None:
         return None
-    out = {"session_name": sname, "session_key": skey, "pace": pace}
     if cache_path:
         try:
             json.dump(out, open(cache_path, "w"))
@@ -510,6 +528,34 @@ def _load_previous_metrics():
         print(f"  (aviso) no pude leer metrics.json previo: {e}", file=sys.stderr)
         return None
 
+def _load_previous_prediction():
+    """Lee la predicción del deploy anterior, descargada por el workflow."""
+    p = os.path.join(OUT, "predictions.json")
+    if not os.path.exists(p):
+        return None
+    try:
+        with open(p) as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"  (aviso) no pude leer predictions.json previo: {e}", file=sys.stderr)
+        return None
+
+def _abort_if_basis_regressed(current, previous):
+    """Impide que el mismo GP vuelva de quali/practice a la base débil de forma."""
+    if not current or not previous:
+        return
+    same_race = (current.get("season"), current.get("round")) == (previous.get("season"), previous.get("round"))
+    rank = {"form": 0, "practice": 1, "quali": 2}
+    current_basis = current.get("basis") or "form"
+    previous_basis = previous.get("basis") or "form"
+    if same_race and rank.get(current_basis, 0) < rank.get(previous_basis, 0):
+        print(
+            f"\nERROR: prediction basis regressed from {previous_basis} to {current_basis} "
+            f"for {current.get('season')} R{current.get('round')}. "
+            "Aborting to preserve the fresher deployed prediction.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 def _abort_if_regressed(name, current, previous, tol=REGRESSION_TOL):
     """Aborta con exit 1 si current < previous * tol. Silencia si previous es None/0."""
     if not previous or current is None:
@@ -535,6 +581,7 @@ def main():
     # Baseline: métricas de la corrida anterior (si existen). Usado por los guards
     # más abajo para abortar si train_rows o races_in_history regresionan >5%.
     prev_metrics = _load_previous_metrics()
+    prev_prediction = _load_previous_prediction()
     prev_shape = (prev_metrics or {}).get("shape") or {}
     prev_train_rows = prev_shape.get("train_rows") or (prev_metrics or {}).get("train_rows")
     prev_races_history = prev_shape.get("races_in_history")
@@ -557,6 +604,7 @@ def main():
     _abort_if_regressed("train_rows", metrics.get("train_rows"), prev_train_rows)
 
     pred = predict_next(res, spr, models)
+    _abort_if_basis_regressed(pred, prev_prediction)
 
     # Historial de la temporada: backtest walk-forward (sin fuga) de los GP ya disputados.
     # Lo calculamos ANTES de escribir predictions.json para poder aplicar el segundo
