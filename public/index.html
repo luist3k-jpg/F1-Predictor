@@ -3,6 +3,13 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<!-- Defensa en profundidad: si el CDN o un proxy intermedio ignora los headers de
+     no-store, estas meta hint al navegador a no reutilizar la respuesta ni la propia
+     página. Combinado con `fetch(url, { cache: "no-store" })` y `?t=Date.now()`
+     hace muy difícil que el browser sirva JSON stale al pulsar "Sincronizar". -->
+<meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="0" />
 <title>F1 Predictor · Predicción vs Resultado en vivo</title>
 <meta name="description" content="Modelo de predicción de Fórmula 1: pole, top 10, vuelta rápida y sprint, comparado en vivo con el resultado real." />
 <!-- Versiones FIJADAS a propósito. NO usar "latest": @babel/standalone 8.x
@@ -32,6 +39,80 @@ const SYNC_MS = 2 * 60 * 1000;
 
 const pct = (p) => (p == null ? "—" : Math.round(p * 100) + "%");
 
+// Formatea "hace X" a partir de un ISO timestamp. Fallback null si no parsea:
+// el badge se oculta en vez de mostrar "NaN días". Reglas por rango:
+//  < 60 s  -> "hace Xs"        (útil justo tras un deploy)
+//  < 60 m  -> "hace X min"
+//  < 3 h   -> "hace X.Xh"      (decimal para captar 1.5h vs 2.5h claramente)
+//  < 24 h  -> "hace Xh"
+//  ≥ 24 h  -> "hace X días"
+const formatAgo = (iso) => {
+  if (!iso) return null;
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return null;
+  const s = Math.max(0, Math.floor((Date.now() - t) / 1000));
+  if (s < 60) return `hace ${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `hace ${m} min`;
+  const h = s / 3600;
+  if (h < 3) return `hace ${h.toFixed(1)}h`;
+  if (h < 24) return `hace ${Math.floor(h)}h`;
+  return `hace ${Math.floor(h / 24)} días`;
+};
+
+// Umbrales del semáforo (horas). Alineados con el cron de reentrenamiento (2h Jue-Lun):
+// verde hasta 3h = una corrida perdida está OK; ámbar 3-12h = ya son varias saltadas;
+// rojo >12h = casi seguro que el pipeline está caído o el schedule no disparó.
+const freshnessColor = (iso) => {
+  if (!iso) return null;
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return null;
+  const h = (Date.now() - t) / 3600000;
+  if (h < 3)  return { fg: "#06210F", bg: "#33D17A", label: "fresco" };  // verde (paleta C.green)
+  if (h < 12) return { fg: "#2A1D00", bg: "#E0B64A", label: "envejeciendo" };  // ámbar (paleta C.amber)
+  return { fg: "#FFF",     bg: "#E10600", label: "stale" };  // rojo (paleta C.red)
+};
+
+// Badge que muestra "hace X" con color semáforo y se auto-actualiza cada 60s.
+// No dispara refetches — solo recalcula el label local. Si `iso` es inválido
+// devuelve null (no rompe layout). El title tooltip muestra el ISO absoluto para
+// depuración/curiosidad. `compact` reduce padding para caber junto al sync stamp.
+const FreshnessBadge = ({ iso, prefix = "actualizado", compact = false }) => {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (!iso) return;
+    const id = setInterval(() => tick((x) => x + 1), 60000);
+    return () => clearInterval(id);
+  }, [iso]);
+  const label = formatAgo(iso);
+  const col = freshnessColor(iso);
+  if (!label || !col) return null;
+  return (
+    <span title={new Date(iso).toLocaleString("es-MX")}
+      style={{
+        fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+        fontSize: 11, fontWeight: 700, letterSpacing: "0.02em",
+        padding: compact ? "2px 6px" : "3px 8px", borderRadius: 5,
+        color: col.fg, background: col.bg, border: `1px solid ${col.bg}`,
+        whiteSpace: "nowrap",
+      }}>
+      ● {prefix} {label}
+    </span>
+  );
+};
+
+// Helper: fetch que garantiza no reutilizar copia cacheada (browser/CDN/intermedio).
+// `?t=Date.now()` = URL única cada llamada, `cache: "no-store"` = no guardar la
+// respuesta, `pragma: no-cache` = extra hint para proxies antiguos. Nadie debería
+// devolvernos JSON viejo con estos tres combinados y los headers de netlify.toml.
+const fetchFresh = (url) => {
+  const sep = url.includes("?") ? "&" : "?";
+  return fetch(`${url}${sep}t=${Date.now()}`, {
+    cache: "no-store",
+    headers: { "cache-control": "no-cache", "pragma": "no-cache" },
+  });
+};
+
 function App() {
   const [pred, setPred] = useState(null);
   const [live, setLive] = useState(null);
@@ -43,21 +124,28 @@ function App() {
   useEffect(() => {
     // cache-buster + no-store: el CDN/navegador servía predictions.json cacheado
     // aunque GitHub Actions redespliega cada 2 h. Ahora siempre trae la versión fresca.
-    fetch(`/predictions.json?t=${Date.now()}`, { cache: "no-store" }).then((r) => r.json()).then(setPred).catch(() => setErr("No se pudo cargar predictions.json. ¿Corriste train.py?"));
+    fetchFresh(`/predictions.json`).then((r) => r.json()).then(setPred).catch(() => setErr("No se pudo cargar predictions.json. ¿Corriste train.py?"));
   }, []);
 
   // Historial de la temporada (opcional: si no existe history.json, la sección no se muestra)
   useEffect(() => {
     // cache-buster + no-store: history.json se estaba quedando "congelado" en Monaco (R6, 17-jun)
     // aunque el workflow lo redepliega tras cada GP porque la CDN/navegador servía copia cacheada.
-    fetch(`/history.json?t=${Date.now()}`, { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).then(setHist).catch(() => {});
+    fetchFresh(`/history.json`).then((r) => (r.ok ? r.json() : null)).then(setHist).catch(() => {});
   }, []);
 
+  // "Sincronizar" refresca TODO: predicción + historial + resultados en vivo.
+  // Antes solo pedía live, así que si el usuario cargó la página con un pred stale
+  // (p. ej. basis FORMA antes de que llegara la práctica), el botón nunca traía
+  // el pred nuevo. Ahora los tres endpoints se refetchean con cache-buster + no-store.
   const doSync = async (round, season) => {
     if (round == null) return;
     setSyncing(true);
+    // Predicción + historial en paralelo con el fetch de live: no bloquean si fallan.
+    fetchFresh(`/predictions.json`).then((r) => r.ok ? r.json() : null).then((d) => { if (d) setPred(d); }).catch(() => {});
+    fetchFresh(`/history.json`).then((r) => r.ok ? r.json() : null).then((d) => { if (d) setHist(d); }).catch(() => {});
     try {
-      const r = await fetch(`${LIVE_URL}?season=${season}&round=${round}`);
+      const r = await fetchFresh(`${LIVE_URL}?season=${season}&round=${round}`);
       const d = await r.json();
       if (d.error) setErr(d.error);
       else { setLive(d); setErr(null); setLastSync(new Date()); }
@@ -110,7 +198,11 @@ function App() {
             </div>
             <div style={{ marginTop: 8 }}><BasisBadge basis={pred.basis} practice={pred.practice} /></div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 justify-end">
+            {/* Badge de freshness del pred: verde <3h, ámbar 3-12h, rojo >12h.
+                Se auto-actualiza cada 60s. Detecta visualmente si el pipeline
+                dejó de correr (rojo = casi seguro pipeline caído). */}
+            <FreshnessBadge iso={pred.generated_at} prefix="predicción" />
             {lastSync && <span style={{ color: C.dim, fontFamily: C.mono, fontSize: 11 }}>sync {lastSync.toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}</span>}
             <button onClick={() => doSync(pred.round, pred.season)} disabled={syncing}
               style={{ border: `1px solid ${C.redDark}`, color: C.red, background: "transparent", borderRadius: 6, padding: "6px 12px", fontSize: 12, cursor: "pointer", opacity: syncing ? 0.5 : 1, fontWeight: 700 }}>
@@ -118,7 +210,7 @@ function App() {
             </button>
             <ForceRefresh baseline={pred.generated_at} onFresh={(d) => {
               setPred(d);
-              fetch("/history.json?t=" + Date.now(), { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).then(setHist).catch(() => {});
+              fetchFresh("/history.json").then((r) => (r.ok ? r.json() : null)).then(setHist).catch(() => {});
             }} />
           </div>
         </div>
@@ -223,7 +315,7 @@ function ForceRefresh({ baseline, onFresh }) {
     const MAX = 8 * 60 * 1000; // deja de esperar tras 8 min
     const tick = async () => {
       try {
-        const r = await fetch(`/predictions.json?t=${Date.now()}`, { cache: "no-store" });
+        const r = await fetchFresh(`/predictions.json`);
         const d = await r.json();
         if (alive && baseline && d.generated_at && new Date(d.generated_at) > new Date(baseline)) {
           setSt("done"); setMsg("✓ Predicciones actualizadas.");
@@ -418,9 +510,13 @@ function SeasonHistory({ history }) {
   return (
     <section className="px-4 pb-16 max-w-5xl mx-auto mt-4">
       <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 10, overflow: "hidden" }}>
-        <div className="flex items-center justify-between px-4 py-2" style={{ background: C.panelAlt, borderBottom: `1px solid ${C.line}` }}>
+        <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2" style={{ background: C.panelAlt, borderBottom: `1px solid ${C.line}` }}>
           <span style={{ fontWeight: 900, fontSize: 14, letterSpacing: "0.06em" }}>HISTORIAL DE LA TEMPORADA {history.season}</span>
-          <span style={{ fontFamily: C.mono, fontSize: 10, color: C.dim }}>{s.races} GP · backtest sin fuga</span>
+          <div className="flex items-center gap-2">
+            {/* Freshness del backtest: mismo semáforo que el pred */}
+            <FreshnessBadge iso={history.generated_at} prefix="backtest" compact />
+            <span style={{ fontFamily: C.mono, fontSize: 10, color: C.dim }}>{s.races} GP · sin fuga</span>
+          </div>
         </div>
 
         {/* resumen de la temporada */}

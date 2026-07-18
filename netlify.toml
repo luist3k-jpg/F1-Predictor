@@ -7,8 +7,13 @@
 # Nunca cachear los JSON de la app: se regeneran en cada workflow (cada 2 h Jue–Lun).
 # Antes: la CDN de Netlify servía history.json/predictions.json cacheados y la web
 # mostraba datos viejos (p. ej. historial congelado en Monaco tras Barcelona/Austria).
+# Escalado a `no-store`: `max-age=0, must-revalidate` seguía permitiendo copias
+# almacenadas (browser + intermediaries) que servían stale al pulsar "Sincronizar"
+# sin llegar al origin. `no-store` prohíbe cualquier copia en cualquier cache.
 [[headers]]
   for = "/*.json"
   [headers.values]
-    Cache-Control = "public, max-age=0, must-revalidate"
-    Netlify-CDN-Cache-Control = "public, max-age=0, must-revalidate"
+    Cache-Control = "no-store, no-cache, must-revalidate, max-age=0"
+    Netlify-CDN-Cache-Control = "no-store"
+    Pragma = "no-cache"
+    Expires = "0"
