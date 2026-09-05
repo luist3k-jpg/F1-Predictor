@@ -10,8 +10,8 @@ on:
   push:
     branches: [ main ]              # cada push a main: reentrena con datos frescos y redespliega
   schedule:
-   - cron: "0 */2 * * 0,5,6"       # Vie, Sáb, Dom · cada 2 horas (Dom captura la carrera)
-
+    - cron: "0 */2 * * 0,5,6"       # Vie, Sáb, Dom · cada 2 horas (Dom captura la carrera)
+  workflow_dispatch: {}             # ejecución manual desde la pestaña "Actions"
 concurrency:
   group: retrain-deploy
   cancel-in-progress: false
