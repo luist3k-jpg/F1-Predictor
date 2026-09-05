@@ -2,7 +2,7 @@ name: Reentrenar y desplegar F1 Predictor
 
 # Cuándo se ejecuta (siempre reentrena con datos frescos y redespliega):
 #   · push a main       -> publica los cambios de código al instante.
-#   · cada 2 h Jue–Lun  -> recoge prácticas/clasificación/sprint/carrera del fin de
+#   · cada 2 h Vie–Dom  -> recoge prácticas/clasificación/sprint/carrera del fin de
 #                          semana y refina la predicción sola, sin intervención.
 #   · manual            -> botón "Run workflow" en la pestaña Actions.
 # La predicción se refina sola: forma → práctica (OpenF1) → clasificación → carrera.
@@ -10,8 +10,7 @@ on:
   push:
     branches: [ main ]              # cada push a main: reentrena con datos frescos y redespliega
   schedule:
-    - cron: "0 */2 * * 0,1,4,5,6"   # Jue, Vie, Sáb, Dom, Lun · cada 2 horas
-  workflow_dispatch: {}             # ejecución manual desde la pestaña "Actions"
+   - cron: "0 */2 * * 0,5,6"       # Vie, Sáb, Dom · cada 2 horas (Dom captura la carrera)
 
 concurrency:
   group: retrain-deploy
